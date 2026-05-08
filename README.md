@@ -22,7 +22,7 @@ With this module, merchants can:
 
 ### Option 1 — Install from Source
 1. Download or clone this repository.
-2. Copy the `flutterwave` folder into your PrestaShop `/modules` directory.
+2. Copy the `flutterwavepayment` folder into your PrestaShop `/modules` directory.
 3. In your PrestaShop Admin panel:
    - Go to **Modules → Module Manager**
    - Search for **Flutterwave**
@@ -30,11 +30,14 @@ With this module, merchants can:
 4. Click **Configure** and enter your API credentials.
 
 ### Option 2 — Upload as ZIP
-1. Zip the `flutterwave` folder.
+1. Zip the `flutterwavepayment` folder.
 2. Go to **Modules → Module Manager**.
 3. Click **Upload a module**.
 4. Upload the ZIP file and install.
 5. Configure the module with your Flutterwave credentials.
+
+### Option 3 - Developer Friendly
+For the step-by-step guide on this option use the guide [here](/docs/DOCKER_COMPOSE_INSTRUCTIONS.md)
 
 ---
 
