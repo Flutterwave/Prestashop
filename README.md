@@ -1,4 +1,8 @@
-# Flutterwave PrestaShop Payment Module
+<p align="center">
+    <img title="Flutterwave" height="200" src="https://flutterwave.com/images/logo/full.svg" width="50%"/>
+</p>
+
+# Flutterwave V3 PrestaShop Payment Module
 
 The official PrestaShop module for accepting payments via Flutterwave.
 
@@ -10,13 +14,10 @@ The official PrestaShop module for accepting payments via Flutterwave.
 
 The Flutterwave PrestaShop module enables merchants to securely accept online payments directly in their PrestaShop store using Flutterwave’s hosted checkout.
 
-With this module, merchants can:
+Available features include:
 
-- Accept global and local payments securely  
-- Support multiple payment methods (cards, bank transfers, mobile money, wallets)  
-- Automatically verify payments  
-- Receive real-time webhook updates  
-- Seamlessly switch between Test and Live modes  
+- Collections: Card, Account, Mobile money, Bank Transfers, USSD, Apple Pay, Google Pay, Fawry Pay, eNaira.
+- Transactions dispute management: Refunds and Chargebacks.
 
 ---
 
