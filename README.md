@@ -143,7 +143,7 @@ For full documentation, visit the Flutterwave Developer Docs.
 ## Support
 
 - Developer Documentation: Flutterwave Docs  
-- Support: support@flutterwave.com  
+- Support: hi@flutterwave.com  
 - Check PrestaShop logs in `/var/logs/`
 
 ---
