@@ -2,6 +2,8 @@
 
 The official PrestaShop module for accepting payments via Flutterwave.
 
+![Payment Gateway List](flutterwavepayment/img.png)
+
 ---
 
 ## Overview
