@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  # Prestashop Service
+  prestashop:
+    container_name: prestashop
+    image: prestashop/prestashop:latest
+    restart: unless-stopped
+    ports:
+      - '8084:80'
+    environment:
+      DB_SERVER: db
+      DB_NAME: prestashop
+      DB_USER: root
+      DB_PASSWD: admin
+      PS_DOMAIN: local
+      PS_FOLDER_ADMIN: admin
+      ADMIN_MAIL: developer@flutterwavego.com
+      ADMIN_PASSWD: Flutterwave4Life
+      PS_FOLDER_INSTALL: install144
+      PS_DEV_MODE: 1
+    volumes:
+      - type: bind
+        source: ./flutterwavepayment/ # local path to the module
+        target: /var/www/html/modules/flutterwavepayment # path to be mounted in the container
+      - prestashop_src:/bitnami/prestashop
+    depends_on:
+      - db
+
+  db:
+    image: mysql:5.7
+    platform: linux/amd64 # Force x86_64 emulation
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: admin
+      MYSQL_DATABASE: prestashop
+    volumes:
+      - 'prestashop_data:/bitnami/mariadb'
+
+volumes:
+  prestashop_src:
+    driver: local
+  prestashop_data:
+    driver: local
