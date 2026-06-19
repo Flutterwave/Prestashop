@@ -49,7 +49,7 @@ class FlutterwavePayment extends PaymentModule
             && $this->registerHook('paymentOptions')
             && $this->registerHook('displayPaymentReturn')
             && $this->registerHook('actionOrderStatusUpdate');
-//            && Configuration::updateValue('FLUTTERWAVE_LIVE_MODE', 0)
+        //            && Configuration::updateValue('FLUTTERWAVE_LIVE_MODE', 0)
 //            && Configuration::updateValue('FLUTTERWAVE_PUBLIC_KEY', '')
 //            && Configuration::updateValue('FLUTTERWAVE_SECRET_KEY', '')
 //            && Configuration::updateValue('FLUTTERWAVE_WEBHOOK_SECRET', '');
@@ -97,6 +97,13 @@ class FlutterwavePayment extends PaymentModule
     {
         $defaultLang = (int) Configuration::get('PS_LANG_DEFAULT');
 
+        $webhookUrl = $this->context->link->getModuleLink(
+            $this->name,
+            'webhook',
+            [],
+            true
+        );
+
         $fieldsForm[0]['form'] = [
             'legend' => [
                 'title' => $this->l('Settings'),
@@ -120,6 +127,14 @@ class FlutterwavePayment extends PaymentModule
                             'label' => $this->l('Disabled')
                         ]
                     ],
+                ],
+                [
+                    'type' => 'text',
+                    'label' => $this->l('Webhook URL'),
+                    'name' => 'FLUTTERWAVE_WEBHOOK_URL_DISPLAY',
+                    'readonly' => true,
+                    'size' => 100,
+                    'desc' => $this->l('Copy this URL and configure it in your Flutterwave dashboard.'),
                 ],
                 [
                     'type' => 'text',
@@ -182,6 +197,7 @@ class FlutterwavePayment extends PaymentModule
         $helper->fields_value['FLUTTERWAVE_PUBLIC_KEY'] = Configuration::get('FLUTTERWAVE_PUBLIC_KEY');
         $helper->fields_value['FLUTTERWAVE_SECRET_KEY'] = Configuration::get('FLUTTERWAVE_SECRET_KEY');
         $helper->fields_value['FLUTTERWAVE_WEBHOOK_SECRET'] = Configuration::get('FLUTTERWAVE_WEBHOOK_SECRET');
+        $helper->fields_value['FLUTTERWAVE_WEBHOOK_URL_DISPLAY'] = $webhookUrl;
 
         return $helper->generateForm($fieldsForm);
     }

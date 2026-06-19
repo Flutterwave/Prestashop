@@ -1,0 +1,25 @@
+{
+    "name": "flutterwavedev/module-prestashop",
+    "description": "Official Flutterwave Module for Prestashop",
+    "license": "MIT",
+    "minimum-stability": "dev",
+    "prefer-stable": true,
+    "require-dev": {
+        "pestphp/pest": "^4.7"
+    },
+    "autoload": {
+        "psr-4": {
+            "FlutterwavePayment\\": "flutterwavepayment/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    }
+}

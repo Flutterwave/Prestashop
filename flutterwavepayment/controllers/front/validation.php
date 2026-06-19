@@ -11,6 +11,8 @@ if (!defined('_PS_VERSION_')) {
     exit;
 }
 
+use FlutterwavePayment\classes\FlutterwaveApiClient;
+
 require_once dirname(__FILE__) . '/../../classes/FlutterwaveApiClient.php';
 
 class FlutterwavePaymentValidationModuleFrontController extends ModuleFrontController
