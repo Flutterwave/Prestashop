@@ -7,9 +7,13 @@
  * @license   https://opensource.org/licenses/AFL-3.0 Academic Free License 3.0 (AFL-3.0)
  */
 
+namespace FlutterwavePayment\classes;
+
 if (!defined('_PS_VERSION_')) {
     exit;
 }
+
+
 
 class FlutterwaveApiClient
 {
@@ -96,6 +100,20 @@ class FlutterwaveApiClient
         ]);
     }
 
+    public function refundTransaction($transactionId, $amount = null)
+    {
+        $endpoint = 'transactions/' . urlencode($transactionId) . '/refund';
+
+        $payload = [];
+        if ($amount !== null) {
+            $payload['amount'] = $amount;
+        }
+
+        return $this->postRequest($endpoint, $payload, [
+            "Authorization: Bearer {$this->secretKey}",
+        ]);
+    }
+
     /**
      * Perform a GET request
      *
@@ -139,7 +157,7 @@ class FlutterwaveApiClient
         $payload = json_encode($data);
 
         if ($payload === false) {
-            throw new Exception('Failed to encode request payload as JSON');
+            throw new \Exception('Failed to encode request payload as JSON');
         }
 
         $headers = array_merge($headers, [
@@ -178,18 +196,18 @@ class FlutterwaveApiClient
         curl_close($ch);
 
         if ($error) {
-            throw new Exception('cURL Error: ' . $error);
+            throw new \Exception('cURL Error: ' . $error);
         }
 
         if ($response === false || $response === '') {
-            throw new Exception('Empty response from Flutterwave API');
+            throw new \Exception('Empty response from Flutterwave API');
         }
 
 
         $result = json_decode($response, true);
 
         if (json_last_error() !== JSON_ERROR_NONE) {
-            throw new Exception('Invalid JSON response from Flutterwave API: ' . json_last_error_msg());
+            throw new \Exception('Invalid JSON response from Flutterwave API: ' . json_last_error_msg());
         }
 
         if ($httpCode >= 400) {
@@ -203,7 +221,7 @@ class FlutterwaveApiClient
                     : $result['error'];
             }
 
-            throw new Exception($errorMessage, $httpCode);
+            throw new \Exception($errorMessage, $httpCode);
         }
 
         return $result;

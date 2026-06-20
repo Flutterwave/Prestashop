@@ -11,7 +11,8 @@ if (!defined('_PS_VERSION_')) {
     exit;
 }
 
-class FlutterwavePayment extends PaymentModule
+
+class FlutterwavePayment extends \PaymentModule
 {
     const FLUTTERWAVE_PRODUCTION_URL = 'https://api.flutterwave.com/v3';
     const FLUTTERWAVE_SANDBOX_URL = 'https://api.flutterwave.com/v3';
@@ -48,20 +49,133 @@ class FlutterwavePayment extends PaymentModule
         return parent::install()
             && $this->registerHook('paymentOptions')
             && $this->registerHook('displayPaymentReturn')
-            && $this->registerHook('actionOrderStatusUpdate');
-//            && Configuration::updateValue('FLUTTERWAVE_LIVE_MODE', 0)
+            && $this->registerHook('actionOrderStatusUpdate')
+            && $this->installAdminTab()
+            && $this->installDatabase()
+            && $this->installRefundDatabase();
+        //            && Configuration::updateValue('FLUTTERWAVE_LIVE_MODE', 0)
 //            && Configuration::updateValue('FLUTTERWAVE_PUBLIC_KEY', '')
 //            && Configuration::updateValue('FLUTTERWAVE_SECRET_KEY', '')
 //            && Configuration::updateValue('FLUTTERWAVE_WEBHOOK_SECRET', '');
     }
 
+
+    private function installAdminTab()
+    {
+        $tab = new Tab();
+
+        $tab->active = 1;
+        $tab->class_name = 'AdminFlutterwaveRefund';
+        $tab->module = $this->name;
+        $tab->id_parent = (int) Tab::getIdFromClassName('AdminParentModulesSf');
+
+        foreach (Language::getLanguages(true) as $lang) {
+            $tab->name[$lang['id_lang']] = 'Flutterwave Refunds';
+        }
+
+        return $tab->add();
+    }
+
+    private function uninstallAdminTab()
+    {
+        $idTab = (int) Tab::getIdFromClassName('AdminFlutterwaveRefund');
+
+        if ($idTab) {
+            $tab = new Tab($idTab);
+            return $tab->delete();
+        }
+
+        return true;
+    }
+
     public function uninstall()
     {
-        return parent::uninstall()
+        return $this->uninstallAdminTab()
+            && $this->uninstallDatabase()
+            && parent::uninstall()
             && Configuration::deleteByName('FLUTTERWAVE_LIVE_MODE')
             && Configuration::deleteByName('FLUTTERWAVE_PUBLIC_KEY')
             && Configuration::deleteByName('FLUTTERWAVE_SECRET_KEY')
             && Configuration::deleteByName('FLUTTERWAVE_WEBHOOK_SECRET');
+    }
+
+    private function installDatabase()
+    {
+        $sql = '
+        CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'flutterwave_transaction` (
+            `id_flutterwave_transaction` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `id_order` INT UNSIGNED NOT NULL,
+            `flutterwave_transaction_id` VARCHAR(64) NOT NULL,
+            `flutterwave_reference` VARCHAR(255) NOT NULL,
+            `amount` DECIMAL(20,6) NULL,
+            `currency` VARCHAR(10) NULL,
+            `status` VARCHAR(50) NULL,
+            `refund_processed` TINYINT(1) NOT NULL DEFAULT 0,
+            `refund_amount` DECIMAL(20,6) NULL,
+            `refund_status` VARCHAR(50) NULL,
+            `refunded_at` DATETIME NULL,
+            `created_at` DATETIME NOT NULL,
+            PRIMARY KEY (`id_flutterwave_transaction`),
+            UNIQUE KEY `uniq_order` (`id_order`),
+            KEY `idx_transaction_id` (`flutterwave_transaction_id`),
+            KEY `idx_reference` (`flutterwave_reference`)
+        ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8mb4;
+        ';
+
+        return Db::getInstance()->execute($sql);
+    }
+
+    private function installRefundDatabase()
+    {
+        $sql = '
+        CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'flutterwave_refund` (
+            `id_flutterwave_refund` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `id_order` INT UNSIGNED NOT NULL,
+            `refund_reference` VARCHAR(255) NULL,
+            `amount` DECIMAL(20,6) NOT NULL,
+            `status` VARCHAR(50) NOT NULL,
+            `created_at` DATETIME NOT NULL,
+            PRIMARY KEY (`id_flutterwave_refund`),
+            KEY `idx_order` (`id_order`)
+        ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8mb4;
+        ';
+
+        return Db::getInstance()->execute($sql);
+    }
+
+    private function uninstallDatabase()
+    {
+        $sql = '
+            DROP TABLE IF EXISTS `' . _DB_PREFIX_ . 'flutterwave_transaction`;
+        ';
+
+        $result = Db::getInstance()->execute($sql);
+
+        $sql = '
+            DROP TABLE IF EXISTS `' . _DB_PREFIX_ . 'flutterwave_refund`;
+        ';
+
+        return $result && Db::getInstance()->execute($sql);
+    }
+
+    public function getRefundedAmount($orderId)
+    {
+        return (float) Db::getInstance()->getValue(
+            'SELECT COALESCE(SUM(amount), 0)
+            FROM ' . _DB_PREFIX_ . 'flutterwave_refund
+            WHERE id_order = ' . (int) $orderId . '
+            AND status = "successful"'
+        );
+    }
+
+    public function getRefundsByOrderId($orderId)
+    {
+        return Db::getInstance()->executeS(
+            'SELECT *
+            FROM ' . _DB_PREFIX_ . 'flutterwave_refund
+            WHERE id_order = ' . (int) $orderId . '
+            ORDER BY created_at DESC'
+        );
     }
 
     public function generateReference($cartId)
@@ -93,9 +207,31 @@ class FlutterwavePayment extends PaymentModule
         return $output . $this->displayForm();
     }
 
+    public function hookActionOrderStatusUpdate($params)
+    {
+        // Refunds are handled manually through the
+        // Flutterwave refund service.
+    }
+
+    public function getTransactionByOrderId($orderId)
+    {
+        return Db::getInstance()->getRow(
+            'SELECT *
+            FROM ' . _DB_PREFIX_ . 'flutterwave_transaction
+            WHERE id_order = ' . (int)$orderId
+        );
+    }
+
     public function displayForm()
     {
         $defaultLang = (int) Configuration::get('PS_LANG_DEFAULT');
+
+        $webhookUrl = $this->context->link->getModuleLink(
+            $this->name,
+            'webhook',
+            [],
+            true
+        );
 
         $fieldsForm[0]['form'] = [
             'legend' => [
@@ -120,6 +256,14 @@ class FlutterwavePayment extends PaymentModule
                             'label' => $this->l('Disabled')
                         ]
                     ],
+                ],
+                [
+                    'type' => 'text',
+                    'label' => $this->l('Webhook URL'),
+                    'name' => 'FLUTTERWAVE_WEBHOOK_URL_DISPLAY',
+                    'readonly' => true,
+                    'size' => 100,
+                    'desc' => $this->l('Copy this URL and configure it in your Flutterwave dashboard.'),
                 ],
                 [
                     'type' => 'text',
@@ -182,6 +326,7 @@ class FlutterwavePayment extends PaymentModule
         $helper->fields_value['FLUTTERWAVE_PUBLIC_KEY'] = Configuration::get('FLUTTERWAVE_PUBLIC_KEY');
         $helper->fields_value['FLUTTERWAVE_SECRET_KEY'] = Configuration::get('FLUTTERWAVE_SECRET_KEY');
         $helper->fields_value['FLUTTERWAVE_WEBHOOK_SECRET'] = Configuration::get('FLUTTERWAVE_WEBHOOK_SECRET');
+        $helper->fields_value['FLUTTERWAVE_WEBHOOK_URL_DISPLAY'] = $webhookUrl;
 
         return $helper->generateForm($fieldsForm);
     }

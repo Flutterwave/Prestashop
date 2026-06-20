@@ -11,6 +11,8 @@ if (!defined('_PS_VERSION_')) {
     exit;
 }
 
+use FlutterwavePayment\classes\FlutterwaveApiClient;
+
 require_once dirname(__FILE__) . '/../../classes/FlutterwaveApiClient.php';
 
 class FlutterwavePaymentValidationModuleFrontController extends ModuleFrontController
@@ -30,8 +32,14 @@ class FlutterwavePaymentValidationModuleFrontController extends ModuleFrontContr
         }
 
         // Check if this is a return from payment page
-        $action = Tools::getValue('action');
+        $action = Tools::getValue('status');
         $reference = Tools::getValue('reference');
+
+        if ($action === 'cancelled') {
+            $this->errors[] = $this->module->l('Payment was cancelled.');
+            $this->redirectWithNotifications('index.php?controller=order&step=1');
+        }
+
 
         if (empty($reference)) {
             // Try to get reference from cookie
@@ -68,13 +76,13 @@ class FlutterwavePaymentValidationModuleFrontController extends ModuleFrontContr
                 $cart->id,
                 true
             );
-            
+
 
             // Check transaction status
             if ($status === 'successful' || $status === 'success' || $status === 'completed') {
                 // Verify amount matches cart total
                 $cartTotal = $cart->getOrderTotal(true, Cart::BOTH);
-                
+
                 if (abs($amount - $cartTotal) > FlutterwavePayment::AMOUNT_TOLERANCE) {
                     throw new Exception('Payment amount mismatch');
                 }
@@ -87,7 +95,7 @@ class FlutterwavePaymentValidationModuleFrontController extends ModuleFrontContr
 
                 // Check if order already exists for this cart
                 $orderId = Order::getIdByCartId($cart->id);
-                
+
                 if ($orderId) {
                     // Order already created, redirect to confirmation
                     Tools::redirect('index.php?controller=order-confirmation&id_cart=' . $cart->id . '&id_module=' . $this->module->id . '&id_order=' . $orderId . '&key=' . $customer->secure_key);
@@ -109,6 +117,19 @@ class FlutterwavePaymentValidationModuleFrontController extends ModuleFrontContr
                 );
 
                 $orderId = $this->module->currentOrder;
+
+                Db::getInstance()->insert(
+                    'flutterwave_transaction',
+                    [
+                        'id_order' => (int)$orderId,
+                        'flutterwave_transaction_id' => pSQL((string)$transactionData['id']),
+                        'flutterwave_reference' => pSQL($reference),
+                        'amount' => (float)$amount,
+                        'currency' => pSQL($currency->iso_code),
+                        'status' => pSQL($status),
+                        'created_at' => date('Y-m-d H:i:s'),
+                    ]
+                );
 
                 // Clear cookie
                 $this->context->cookie->__unset('flutterwave_reference_' . $cart->id);
@@ -135,7 +156,11 @@ class FlutterwavePaymentValidationModuleFrontController extends ModuleFrontContr
                 true
             );
 
-            $this->errors[] = $this->module->l('Payment verification failed: ') . $e->getMessage();
+            if ($action === 'failed') {
+                $this->errors[] = $this->module->l('Payment failed. Please try again or contact support.');
+            } else {
+                $this->errors[] = $this->module->l('Payment verification failed. Please try again or contact support.');
+            }
             $this->redirectWithNotifications('index.php?controller=order&step=1');
         }
     }
