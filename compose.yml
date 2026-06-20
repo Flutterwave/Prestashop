@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Prestashop Service
   prestashop:
@@ -34,6 +32,8 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: admin
       MYSQL_DATABASE: prestashop
+    ports:
+      - "3306:3306"
     volumes:
       - 'prestashop_data:/bitnami/mariadb'
 

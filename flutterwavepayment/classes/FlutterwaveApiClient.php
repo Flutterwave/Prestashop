@@ -100,6 +100,20 @@ class FlutterwaveApiClient
         ]);
     }
 
+    public function refundTransaction($transactionId, $amount = null)
+    {
+        $endpoint = 'transactions/' . urlencode($transactionId) . '/refund';
+
+        $payload = [];
+        if ($amount !== null) {
+            $payload['amount'] = $amount;
+        }
+
+        return $this->postRequest($endpoint, $payload, [
+            "Authorization: Bearer {$this->secretKey}",
+        ]);
+    }
+
     /**
      * Perform a GET request
      *
