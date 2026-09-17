@@ -23,7 +23,7 @@ class FlutterwavePayment extends \PaymentModule
     {
         $this->name = 'flutterwavepayment';
         $this->tab = 'payments_gateways';
-        $this->version = '1.0.0';
+        $this->version = '1.0.1';
         $this->author = 'Flutterwave Developers';
         $this->need_instance = 0;
         $this->ps_versions_compliancy = [
@@ -117,7 +117,7 @@ class FlutterwavePayment extends \PaymentModule
             `created_at` DATETIME NOT NULL,
             PRIMARY KEY (`id_flutterwave_transaction`),
             UNIQUE KEY `uniq_order` (`id_order`),
-            KEY `idx_transaction_id` (`flutterwave_transaction_id`),
+            UNIQUE KEY `uniq_transaction_id` (`flutterwave_transaction_id`),
             KEY `idx_reference` (`flutterwave_reference`)
         ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8mb4;
         ';

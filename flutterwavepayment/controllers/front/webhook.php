@@ -47,8 +47,9 @@ class FlutterwavePaymentWebhookModuleFrontController extends ModuleFrontControll
         $signature = $_SERVER['HTTP_VERIF_HASH'];
         $secret = $this->module->getWebhookSecret();
 
-        // Verify signature
-        if ($signature !== $secret) {
+        // The verif-hash header is the static dashboard secret, not a body HMAC.
+        // It only authenticates the sender; payment facts are requeried below.
+        if (empty($secret) || !hash_equals((string) $secret, (string) $signature)) {
             PrestaShopLogger::addLog(
                 'Flutterwave Webhook: Invalid signature',
                 3,
@@ -81,33 +82,42 @@ class FlutterwavePaymentWebhookModuleFrontController extends ModuleFrontControll
         );
 
         try {
-            // Extract event data
-            $event = isset($webhookData['event']) ? $webhookData['event'] : null;
+            // Extract the reference only; everything else in the body is untrusted
             $data = isset($webhookData['data']) ? $webhookData['data'] : $webhookData;
-            
-            $reference = isset($data['tx_ref']) ? $data['tx_ref'] : null;
-            $status = isset($data['status']) ? $data['status'] : null;
-            $amount = isset($data['amount']) ? $data['amount'] : 0;
+            $reference = isset($data['tx_ref']) ? (string) $data['tx_ref'] : null;
 
             if (empty($reference)) {
                 throw new Exception('Reference not found in webhook data');
             }
 
-            // Extract cart ID from reference or metadata
+            // Requery the transaction at the Flutterwave API
+            $apiClient = new FlutterwaveApiClient(
+                $this->module->getApiUrl(),
+                $this->module->getSecretKey(),
+                $this->module->getPublicKey()
+            );
+
+            $response = $apiClient->verifyTransaction($reference);
+            $transactionData = isset($response['data']) ? $response['data'] : [];
+
+            if (!isset($transactionData['tx_ref']) || (string) $transactionData['tx_ref'] !== $reference) {
+                throw new Exception('Verified transaction does not match webhook reference');
+            }
+
+            $status = isset($transactionData['status']) ? $transactionData['status'] : null;
+            $amount = isset($transactionData['amount']) ? (float) $transactionData['amount'] : 0;
+            $currencyCode = isset($transactionData['currency']) ? (string) $transactionData['currency'] : '';
+            $transactionId = isset($transactionData['id']) ? (string) $transactionData['id'] : '';
+
+            // Extract cart ID from the verified reference (format: {PREFIX}CARTID_TIMESTAMP_RANDOM)
             $cartId = null;
-            
-            if (isset($data['metadata']['cart_id'])) {
-                $cartId = (int) $data['metadata']['cart_id'];
-            } else {
-                // Try to extract from reference (format: {PREFIX}CARTID_TIMESTAMP_RANDOM)
-                $pattern = '/^' . preg_quote(FlutterwavePayment::REFERENCE_PREFIX, '/') . '(\d+)_/';
-                if (preg_match($pattern, $reference, $matches)) {
-                    $cartId = (int) $matches[1];
-                }
+            $pattern = '/^' . preg_quote(FlutterwavePayment::REFERENCE_PREFIX, '/') . '(\d+)_/';
+            if (preg_match($pattern, $reference, $matches)) {
+                $cartId = (int) $matches[1];
             }
 
             if (empty($cartId)) {
-                throw new Exception('Cart ID not found in webhook data');
+                throw new Exception('Cart ID not found in webhook reference');
             }
 
             // Check if order already exists
@@ -116,8 +126,30 @@ class FlutterwavePaymentWebhookModuleFrontController extends ModuleFrontControll
             if ($orderId) {
                 $order = new Order($orderId);
                 
-                // Update order status based on webhook event
+                // Update order status based on the verified transaction
                 if ($status === 'successful' || $status === 'success' || $status === 'completed') {
+                    $orderCurrency = new Currency($order->id_currency);
+
+                    if (abs($amount - (float) $order->total_paid) > FlutterwavePayment::AMOUNT_TOLERANCE) {
+                        throw new Exception('Payment amount mismatch for order #' . $orderId);
+                    }
+
+                    if ($currencyCode !== $orderCurrency->iso_code) {
+                        throw new Exception('Payment currency mismatch for order #' . $orderId);
+                    }
+
+                    // The charge must not already be recorded against a different order
+                    $linkedOrderId = (int) Db::getInstance()->getValue(
+                        'SELECT id_order FROM `' . _DB_PREFIX_ . 'flutterwave_transaction`
+                        WHERE flutterwave_transaction_id = "' . pSQL($transactionId) . '"
+                        OR flutterwave_reference = "' . pSQL($reference) . '"',
+                        false
+                    );
+
+                    if ($transactionId === '' || ($linkedOrderId && $linkedOrderId !== (int) $orderId)) {
+                        throw new Exception('Transaction ' . $transactionId . ' is not linked to order #' . $orderId);
+                    }
+
                     // Payment successful - ensure order is marked as paid
                     if ($order->getCurrentState() != Configuration::get('PS_OS_PAYMENT')) {
                         $order->setCurrentState(Configuration::get('PS_OS_PAYMENT'));
