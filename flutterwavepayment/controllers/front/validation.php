@@ -12,8 +12,10 @@ if (!defined('_PS_VERSION_')) {
 }
 
 use FlutterwavePayment\classes\FlutterwaveApiClient;
+use FlutterwavePayment\classes\FlutterwaveTransactionVerifier;
 
 require_once dirname(__FILE__) . '/../../classes/FlutterwaveApiClient.php';
+require_once dirname(__FILE__) . '/../../classes/FlutterwaveTransactionVerifier.php';
 
 class FlutterwavePaymentValidationModuleFrontController extends ModuleFrontController
 {
@@ -43,9 +45,8 @@ class FlutterwavePaymentValidationModuleFrontController extends ModuleFrontContr
         // Never accept a reference from the query string: it lets a paid reference
         // from another cart be replayed onto this one.
         $reference = (string) $this->context->cookie->__get('flutterwave_reference_' . $cart->id);
-        $referencePrefix = FlutterwavePayment::REFERENCE_PREFIX . (int) $cart->id . '_';
 
-        if (empty($reference) || strpos($reference, $referencePrefix) !== 0) {
+        if (!FlutterwaveTransactionVerifier::referenceBelongsToCart($reference, $cart->id)) {
             $this->errors[] = $this->module->l('Payment reference not found.');
             $this->redirectWithNotifications('index.php?controller=order&step=1');
             return;
@@ -65,42 +66,33 @@ class FlutterwavePaymentValidationModuleFrontController extends ModuleFrontContr
             // Extract transaction data
             $transactionData = isset($response['data']) ? $response['data'] : $response;
             $status = isset($transactionData['status']) ? $transactionData['status'] : null;
-            $amount = isset($transactionData['amount']) ? $transactionData['amount'] : 0;
 
+            // Log only the fields needed to trace the payment, not customer or card details
             PrestaShopLogger::addLog(
-                'Flutterwave Response: ' . json_encode($response),
-                3,
+                'Flutterwave verification for ' . $reference . ': status=' . $status
+                . ', id=' . (isset($transactionData['id']) ? $transactionData['id'] : '')
+                . ', amount=' . (isset($transactionData['amount']) ? $transactionData['amount'] : '')
+                . ' ' . (isset($transactionData['currency']) ? $transactionData['currency'] : ''),
+                1,
                 null,
-                'Validation',
+                'Cart',
                 $cart->id,
                 true
             );
 
-
             // The verified transaction must be the one minted for this cart
-            if (!isset($transactionData['tx_ref']) || (string) $transactionData['tx_ref'] !== $reference) {
-                throw new Exception('Payment reference mismatch');
-            }
+            FlutterwaveTransactionVerifier::assertReference($transactionData, $reference);
 
             // Check transaction status
-            if ($status === 'successful' || $status === 'success' || $status === 'completed') {
-                if (empty($transactionData['id'])) {
-                    throw new Exception('Transaction ID missing from verification response');
-                }
-                $transactionId = (string) $transactionData['id'];
-
-                // Verify amount matches cart total
-                $cartTotal = $cart->getOrderTotal(true, Cart::BOTH);
-
-                if (abs($amount - $cartTotal) > FlutterwavePayment::AMOUNT_TOLERANCE) {
-                    throw new Exception('Payment amount mismatch');
-                }
-
-                // Check if the currency matches                
+            if (FlutterwaveTransactionVerifier::isSuccessful($status)) {
+                // Verify amount and currency match the cart
                 $currency = new Currency($cart->id_currency);
-                if (!isset($transactionData['currency']) || $transactionData['currency'] !== $currency->iso_code) {
-                    throw new Exception('Payment currency mismatch');
-                }
+                $transactionId = FlutterwaveTransactionVerifier::assertPaymentMatches(
+                    $transactionData,
+                    $cart->getOrderTotal(true, Cart::BOTH),
+                    $currency->iso_code
+                );
+                $amount = (float) $transactionData['amount'];
 
                 // Check if order already exists for this cart
                 $orderId = Order::getIdByCartId($cart->id);
@@ -176,7 +168,7 @@ class FlutterwavePaymentValidationModuleFrontController extends ModuleFrontContr
 
                 // Redirect to order confirmation
                 Tools::redirect('index.php?controller=order-confirmation&id_cart=' . $cart->id . '&id_module=' . $this->module->id . '&id_order=' . $orderId . '&key=' . $customer->secure_key);
-            } elseif ($status === 'pending' || $status === 'processing') {
+            } elseif (FlutterwaveTransactionVerifier::isPending($status)) {
                 // Payment is still pending
                 $this->warnings[] = $this->module->l('Your payment is being processed. Please wait...');
                 $this->redirectWithNotifications('index.php?controller=order&step=1');

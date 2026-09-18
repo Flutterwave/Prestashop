@@ -11,13 +11,14 @@ if (!defined('_PS_VERSION_')) {
     exit;
 }
 
+require_once dirname(__FILE__) . '/classes/FlutterwaveTransactionVerifier.php';
 
 class FlutterwavePayment extends \PaymentModule
 {
     const FLUTTERWAVE_PRODUCTION_URL = 'https://api.flutterwave.com/v3';
     const FLUTTERWAVE_SANDBOX_URL = 'https://api.flutterwave.com/v3';
-    const REFERENCE_PREFIX = 'PS_';
-    const AMOUNT_TOLERANCE = 0.01;
+    const REFERENCE_PREFIX = \FlutterwavePayment\classes\FlutterwaveTransactionVerifier::REFERENCE_PREFIX;
+    const AMOUNT_TOLERANCE = \FlutterwavePayment\classes\FlutterwaveTransactionVerifier::AMOUNT_TOLERANCE;
 
     public function __construct()
     {
