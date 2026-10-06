@@ -2,6 +2,11 @@
 
 use Tests\TestCase;
 
+// Module files exit unless loaded inside PrestaShop
+if (!defined('_PS_VERSION_')) {
+    define('_PS_VERSION_', '8.2.0');
+}
+
 /*
 |--------------------------------------------------------------------------
 | Test Case

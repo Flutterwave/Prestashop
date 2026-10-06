@@ -12,8 +12,12 @@ if (!defined('_PS_VERSION_')) {
 }
 
 use FlutterwavePayment\classes\FlutterwaveApiClient;
+use FlutterwavePayment\classes\FlutterwaveSignozLogger;
+use FlutterwavePayment\classes\FlutterwaveTransactionVerifier;
 
 require_once dirname(__FILE__) . '/../../classes/FlutterwaveApiClient.php';
+require_once dirname(__FILE__) . '/../../classes/FlutterwaveSignozLogger.php';
+require_once dirname(__FILE__) . '/../../classes/FlutterwaveTransactionVerifier.php';
 
 
 class FlutterwavePaymentWebhookModuleFrontController extends ModuleFrontController
@@ -29,6 +33,8 @@ class FlutterwavePaymentWebhookModuleFrontController extends ModuleFrontControll
             http_response_code(400);
             die(json_encode(['status' => 'error', 'message' => 'Empty payload']));
         }
+
+        $signoz = FlutterwaveSignozLogger::instance();
 
         if ( ! isset($_SERVER['HTTP_VERIF_HASH']) || empty($_SERVER['HTTP_VERIF_HASH'])) {
              PrestaShopLogger::addLog(
@@ -47,8 +53,14 @@ class FlutterwavePaymentWebhookModuleFrontController extends ModuleFrontControll
         $signature = $_SERVER['HTTP_VERIF_HASH'];
         $secret = $this->module->getWebhookSecret();
 
-        // Verify signature
-        if ($signature !== $secret) {
+        // Only authenticates the sender; payment details are requeried below
+        if (!FlutterwaveApiClient::verifyWebhookHash($signature, $secret)) {
+            // Forged webhooks are not reported: anyone can send them. A missing
+            // secret is a store misconfiguration, and trackError throttles it.
+            if (empty($secret)) {
+                $signoz->trackError('WEBHOOK_SECRET_HASH_MISSING', 'Webhook rejected because the store has no webhook secret configured.');
+            }
+
             PrestaShopLogger::addLog(
                 'Flutterwave Webhook: Invalid signature',
                 3,
@@ -66,13 +78,15 @@ class FlutterwavePaymentWebhookModuleFrontController extends ModuleFrontControll
         $webhookData = json_decode($payload, true);
         
         if (json_last_error() !== JSON_ERROR_NONE) {
+            $signoz->trackError('WEBHOOK_BODY_DEFORMED', 'Webhook body is not valid JSON: ' . json_last_error_msg());
             http_response_code(400);
             die(json_encode(['status' => 'error', 'message' => 'Invalid JSON']));
         }
 
-        // Log webhook received
+        // Log webhook received, without customer or card details
         PrestaShopLogger::addLog(
-            'Flutterwave Webhook received: ' . json_encode($webhookData),
+            'Flutterwave Webhook received: event=' . (isset($webhookData['event']) ? $webhookData['event'] : '')
+            . ', tx_ref=' . (isset($webhookData['data']['tx_ref']) ? $webhookData['data']['tx_ref'] : ''),
             1,
             null,
             'FlutterwavePayment',
@@ -81,33 +95,33 @@ class FlutterwavePaymentWebhookModuleFrontController extends ModuleFrontControll
         );
 
         try {
-            // Extract event data
-            $event = isset($webhookData['event']) ? $webhookData['event'] : null;
+            // Extract the reference only; everything else in the body is untrusted
             $data = isset($webhookData['data']) ? $webhookData['data'] : $webhookData;
-            
-            $reference = isset($data['tx_ref']) ? $data['tx_ref'] : null;
-            $status = isset($data['status']) ? $data['status'] : null;
-            $amount = isset($data['amount']) ? $data['amount'] : 0;
+            $reference = isset($data['tx_ref']) ? (string) $data['tx_ref'] : null;
 
             if (empty($reference)) {
                 throw new Exception('Reference not found in webhook data');
             }
 
-            // Extract cart ID from reference or metadata
-            $cartId = null;
-            
-            if (isset($data['metadata']['cart_id'])) {
-                $cartId = (int) $data['metadata']['cart_id'];
-            } else {
-                // Try to extract from reference (format: {PREFIX}CARTID_TIMESTAMP_RANDOM)
-                $pattern = '/^' . preg_quote(FlutterwavePayment::REFERENCE_PREFIX, '/') . '(\d+)_/';
-                if (preg_match($pattern, $reference, $matches)) {
-                    $cartId = (int) $matches[1];
-                }
-            }
+            // Requery the transaction at the Flutterwave API
+            $apiClient = new FlutterwaveApiClient(
+                $this->module->getApiUrl(),
+                $this->module->getSecretKey(),
+                $this->module->getPublicKey()
+            );
+
+            $response = $apiClient->verifyTransaction($reference);
+            $transactionData = isset($response['data']) ? $response['data'] : [];
+
+            FlutterwaveTransactionVerifier::assertReference($transactionData, $reference);
+
+            $status = isset($transactionData['status']) ? $transactionData['status'] : null;
+
+            // Extract cart ID from the verified reference
+            $cartId = FlutterwaveTransactionVerifier::cartIdFromReference($reference);
 
             if (empty($cartId)) {
-                throw new Exception('Cart ID not found in webhook data');
+                throw new Exception('Cart ID not found in webhook reference');
             }
 
             // Check if order already exists
@@ -116,8 +130,27 @@ class FlutterwavePaymentWebhookModuleFrontController extends ModuleFrontControll
             if ($orderId) {
                 $order = new Order($orderId);
                 
-                // Update order status based on webhook event
-                if ($status === 'successful' || $status === 'success' || $status === 'completed') {
+                // Update order status based on the verified transaction
+                if (FlutterwaveTransactionVerifier::isSuccessful($status)) {
+                    $orderCurrency = new Currency($order->id_currency);
+                    $transactionId = FlutterwaveTransactionVerifier::assertPaymentMatches(
+                        $transactionData,
+                        $order->total_paid,
+                        $orderCurrency->iso_code
+                    );
+
+                    // The charge must not already be recorded against a different order
+                    $linkedOrderId = (int) Db::getInstance()->getValue(
+                        'SELECT id_order FROM `' . _DB_PREFIX_ . 'flutterwave_transaction`
+                        WHERE flutterwave_transaction_id = "' . pSQL($transactionId) . '"
+                        OR flutterwave_reference = "' . pSQL($reference) . '"',
+                        false
+                    );
+
+                    if ($linkedOrderId && $linkedOrderId !== (int) $orderId) {
+                        throw new Exception('Transaction ' . $transactionId . ' is not linked to order #' . $orderId);
+                    }
+
                     // Payment successful - ensure order is marked as paid
                     if ($order->getCurrentState() != Configuration::get('PS_OS_PAYMENT')) {
                         $order->setCurrentState(Configuration::get('PS_OS_PAYMENT'));
@@ -131,10 +164,16 @@ class FlutterwavePaymentWebhookModuleFrontController extends ModuleFrontControll
                             true
                         );
                     }
-                } elseif ($status === 'failed' || $status === 'declined') {
+                } elseif (FlutterwaveTransactionVerifier::isFailed($status)) {
                     // Payment failed
                     if ($order->getCurrentState() != Configuration::get('PS_OS_ERROR')) {
                         $order->setCurrentState(Configuration::get('PS_OS_ERROR'));
+
+                        $signoz->trackError(
+                            'PAYMENT_FAILED',
+                            isset($transactionData['processor_response']) ? (string) $transactionData['processor_response'] : 'Payment failed',
+                            $reference
+                        );
                         
                         PrestaShopLogger::addLog(
                             'Flutterwave Webhook: Order #' . $orderId . ' marked as failed',
@@ -165,6 +204,8 @@ class FlutterwavePaymentWebhookModuleFrontController extends ModuleFrontControll
             http_response_code(200);
             die(json_encode(['status' => 'success', 'message' => 'Webhook processed']));
         } catch (Exception $e) {
+            $signoz->trackError('WEBHOOK_PROCESSING_FAILED', $e->getMessage(), isset($reference) ? (string) $reference : '');
+
             PrestaShopLogger::addLog(
                 'Flutterwave Webhook Error: ' . $e->getMessage(),
                 3,

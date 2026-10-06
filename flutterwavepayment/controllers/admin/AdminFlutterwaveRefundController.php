@@ -1,5 +1,9 @@
 <?php
 
+if (!defined('_PS_VERSION_')) {
+    exit;
+}
+
 class AdminFlutterwaveRefundController extends ModuleAdminController
 {
     public function __construct()
@@ -95,6 +99,18 @@ class AdminFlutterwaveRefundController extends ModuleAdminController
                     'Refund completed successfully';
 
             } catch (Exception $e) {
+
+                require_once dirname(__FILE__) .
+                    '/../../classes/FlutterwaveSignozLogger.php';
+
+                $transaction = Module::getInstanceByName('flutterwavepayment')
+                    ->getTransactionByOrderId($orderId);
+
+                \FlutterwavePayment\classes\FlutterwaveSignozLogger::instance()->trackError(
+                    'REFUND_FAILED',
+                    $e->getMessage(),
+                    $transaction ? (string) $transaction['flutterwave_reference'] : ''
+                );
 
                 $this->errors[] =
                     $e->getMessage();
