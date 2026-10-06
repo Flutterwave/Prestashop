@@ -124,22 +124,11 @@ class FlutterwaveApiClient
      */
     private function getRequest($endpoint, $headers = [])
     {
-        $url = $this->apiUrl . $endpoint;
-
         $headers = array_merge($headers, [
             'Accept: application/json',
         ]);
 
-        $ch = curl_init($url);
-
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_HTTPHEADER     => $headers,
-            CURLOPT_TIMEOUT        => 60,
-            CURLOPT_CONNECTTIMEOUT => 10,
-        ]);
-
-        return $this->executeRequest($ch);
+        return $this->executeRequest('GET', $this->apiUrl . $endpoint, $headers);
     }
 
     /**
@@ -153,7 +142,6 @@ class FlutterwaveApiClient
      */
     private function postRequest($endpoint, array $data, $headers = [])
     {
-        $url     = $this->apiUrl . $endpoint;
         $payload = json_encode($data);
 
         if ($payload === false) {
@@ -166,34 +154,22 @@ class FlutterwaveApiClient
             'User-Agent: Flutterwave Payment PrestaShop Module'
         ]);
 
-        $ch = curl_init($url);
-
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_HTTPHEADER     => $headers,
-            CURLOPT_TIMEOUT        => 60,
-            CURLOPT_CONNECTTIMEOUT => 10,
-            CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => $payload,
-        ]);
-
-        return $this->executeRequest($ch);
+        return $this->executeRequest('POST', $this->apiUrl . $endpoint, $headers, $payload);
     }
 
     /**
-     * Execute the prepared cURL request and handle response/errors
+     * Send the request and handle response/errors
      *
-     * @param resource $ch
+     * @param string      $method
+     * @param string      $url
+     * @param array       $headers
+     * @param string|null $body
      * @return array
      * @throws Exception
      */
-    private function executeRequest($ch)
+    private function executeRequest($method, $url, array $headers, $body = null)
     {
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $error    = curl_error($ch);
-
-        curl_close($ch);
+        list($response, $httpCode, $error) = $this->sendHttpRequest($method, $url, $headers, $body);
 
         if ($error) {
             throw new \Exception('cURL Error: ' . $error);
@@ -228,27 +204,58 @@ class FlutterwaveApiClient
     }
 
     /**
-     * Verify webhook signature
+     * Perform the HTTP request
      *
-     * @param string $payload Webhook payload (raw POST body)
-     * @param string $signature Webhook signature from header
-     * @param string $webhookSecret Webhook secret from Flutterwave Dashboard
+     * @param string      $method
+     * @param string      $url
+     * @param array       $headers
+     * @param string|null $body
+     * @return array [response body, HTTP status code, cURL error]
+     */
+    protected function sendHttpRequest($method, $url, array $headers, $body = null)
+    {
+        $ch = curl_init($url);
+
+        $options = [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HTTPHEADER     => $headers,
+            CURLOPT_TIMEOUT        => 60,
+            CURLOPT_CONNECTTIMEOUT => 10,
+        ];
+
+        if ($method === 'POST') {
+            $options[CURLOPT_POST] = true;
+            $options[CURLOPT_POSTFIELDS] = $body;
+        }
+
+        curl_setopt_array($ch, $options);
+
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $error    = curl_error($ch);
+
+        curl_close($ch);
+
+        return [$response, $httpCode, $error];
+    }
+
+    /**
+     * Verify the verif-hash webhook header
+     *
+     * Flutterwave sends the secret hash configured in the dashboard as-is; it
+     * is not an HMAC of the body. It only authenticates the sender, so payment
+     * details must still be requeried from the API.
+     *
+     * @param string $header        verif-hash header value
+     * @param string $webhookSecret Secret hash from Flutterwave Dashboard
      * @return bool
      */
-    public static function verifyWebhookSignature($payload, $signature, $webhookSecret)
+    public static function verifyWebhookHash($header, $webhookSecret)
     {
-        if (empty($webhookSecret) || empty($signature)) {
+        if (empty($webhookSecret) || empty($header)) {
             return false;
         }
 
-        // Remove any prefix if present (e.g., 'sha256=')
-        $cleanSignature = $signature;
-        if (strpos($signature, '=') !== false) {
-            list($algorithm, $cleanSignature) = explode('=', $signature, 2);
-        }
-
-        $computedSignature = hash_hmac('sha256', $payload, $webhookSecret);
-
-        return hash_equals($computedSignature, $cleanSignature);
+        return hash_equals((string) $webhookSecret, (string) $header);
     }
 }

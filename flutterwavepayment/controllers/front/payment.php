@@ -12,8 +12,10 @@ if (!defined('_PS_VERSION_')) {
 }
 
 use FlutterwavePayment\classes\FlutterwaveApiClient;
+use FlutterwavePayment\classes\FlutterwaveSignozLogger;
 
 require_once dirname(__FILE__) . '/../../classes/FlutterwaveApiClient.php';
+require_once dirname(__FILE__) . '/../../classes/FlutterwaveSignozLogger.php';
 
 
 class FlutterwavePaymentPaymentModuleFrontController extends ModuleFrontController
@@ -92,6 +94,8 @@ class FlutterwavePaymentPaymentModuleFrontController extends ModuleFrontControll
                 $this->module->getPublicKey()
             );
 
+            FlutterwaveSignozLogger::instance()->trackRequestSent('POST', $reference, '/payments');
+
             // Initiate checkout
             $response = $apiClient->initiateCheckout($checkoutData);
 
@@ -108,6 +112,8 @@ class FlutterwavePaymentPaymentModuleFrontController extends ModuleFrontControll
                 throw new Exception('No checkout URL received from Flutterwave API');
             }
         } catch (Exception $e) {
+            FlutterwaveSignozLogger::instance()->trackError('PAYMENT_INITIATION_FAILED', $e->getMessage(), $reference);
+
             PrestaShopLogger::addLog(
                 'Flutterwave Payment Error: ' . $e->getMessage(),
                 3,
