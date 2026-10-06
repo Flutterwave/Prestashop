@@ -12,9 +12,11 @@ if (!defined('_PS_VERSION_')) {
 }
 
 use FlutterwavePayment\classes\FlutterwaveApiClient;
+use FlutterwavePayment\classes\FlutterwaveSignozLogger;
 use FlutterwavePayment\classes\FlutterwaveTransactionVerifier;
 
 require_once dirname(__FILE__) . '/../../classes/FlutterwaveApiClient.php';
+require_once dirname(__FILE__) . '/../../classes/FlutterwaveSignozLogger.php';
 require_once dirname(__FILE__) . '/../../classes/FlutterwaveTransactionVerifier.php';
 
 class FlutterwavePaymentValidationModuleFrontController extends ModuleFrontController
@@ -47,10 +49,16 @@ class FlutterwavePaymentValidationModuleFrontController extends ModuleFrontContr
         $reference = (string) $this->context->cookie->__get('flutterwave_reference_' . $cart->id);
 
         if (!FlutterwaveTransactionVerifier::referenceBelongsToCart($reference, $cart->id)) {
+            FlutterwaveSignozLogger::instance()->trackError(
+                'CALLBACK_REJECTED',
+                'Payment return could not be bound to a reference issued for this cart.'
+            );
             $this->errors[] = $this->module->l('Payment reference not found.');
             $this->redirectWithNotifications('index.php?controller=order&step=1');
             return;
         }
+
+        $status = null;
 
         try {
             // Initialize API client
@@ -162,6 +170,17 @@ class FlutterwavePaymentValidationModuleFrontController extends ModuleFrontContr
                     $db->getValue("SELECT RELEASE_LOCK('" . $lockName . "')", false);
                 }
 
+                $signoz = FlutterwaveSignozLogger::instance();
+                if ($signoz->getCurrentEnvironment() === 'production') {
+                    $signoz->trackTransaction(
+                        $reference,
+                        $currency->iso_code,
+                        $amount,
+                        isset($transactionData['payment_type']) ? (string) $transactionData['payment_type'] : 'card',
+                        isset($transactionData['app_fee']) ? (float) $transactionData['app_fee'] : 0.0
+                    );
+                }
+
                 // Clear cookie
                 $this->context->cookie->__unset('flutterwave_reference_' . $cart->id);
                 $this->context->cookie->write();
@@ -178,6 +197,12 @@ class FlutterwavePaymentValidationModuleFrontController extends ModuleFrontContr
                 throw new Exception($errorMessage);
             }
         } catch (Exception $e) {
+            FlutterwaveSignozLogger::instance()->trackError(
+                FlutterwaveTransactionVerifier::isFailed($status) ? 'PAYMENT_FAILED' : 'PAYMENT_VERIFICATION_FAILED',
+                $e->getMessage(),
+                $reference
+            );
+
             PrestaShopLogger::addLog(
                 'Flutterwave Payment Validation Error: ' . $e->getMessage(),
                 3,

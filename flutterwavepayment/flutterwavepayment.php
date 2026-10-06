@@ -12,6 +12,9 @@ if (!defined('_PS_VERSION_')) {
 }
 
 require_once dirname(__FILE__) . '/classes/FlutterwaveTransactionVerifier.php';
+require_once dirname(__FILE__) . '/classes/FlutterwaveSignozLogger.php';
+
+use FlutterwavePayment\classes\FlutterwaveSignozLogger;
 
 class FlutterwavePayment extends \PaymentModule
 {
@@ -24,7 +27,7 @@ class FlutterwavePayment extends \PaymentModule
     {
         $this->name = 'flutterwavepayment';
         $this->tab = 'payments_gateways';
-        $this->version = '1.0.1';
+        $this->version = '1.1.0';
         $this->author = 'Flutterwave Developers';
         $this->need_instance = 0;
         $this->ps_versions_compliancy = [
@@ -51,9 +54,11 @@ class FlutterwavePayment extends \PaymentModule
             && $this->registerHook('paymentOptions')
             && $this->registerHook('displayPaymentReturn')
             && $this->registerHook('actionOrderStatusUpdate')
+            && $this->registerHook('displayBackOfficeHeader')
             && $this->installAdminTab()
             && $this->installDatabase()
-            && $this->installRefundDatabase();
+            && $this->installRefundDatabase()
+            && $this->installSignozDatabase();
         //            && Configuration::updateValue('FLUTTERWAVE_LIVE_MODE', 0)
 //            && Configuration::updateValue('FLUTTERWAVE_PUBLIC_KEY', '')
 //            && Configuration::updateValue('FLUTTERWAVE_SECRET_KEY', '')
@@ -97,7 +102,11 @@ class FlutterwavePayment extends \PaymentModule
             && Configuration::deleteByName('FLUTTERWAVE_LIVE_MODE')
             && Configuration::deleteByName('FLUTTERWAVE_PUBLIC_KEY')
             && Configuration::deleteByName('FLUTTERWAVE_SECRET_KEY')
-            && Configuration::deleteByName('FLUTTERWAVE_WEBHOOK_SECRET');
+            && Configuration::deleteByName('FLUTTERWAVE_WEBHOOK_SECRET')
+            && Configuration::deleteByName(FlutterwaveSignozLogger::CONFIG_APP_ID)
+            && Configuration::deleteByName(FlutterwaveSignozLogger::CONFIG_APP_REGISTERED)
+            && Configuration::deleteByName(FlutterwaveSignozLogger::CONFIG_REGISTERED_KEY)
+            && Configuration::deleteByName(FlutterwaveSignozLogger::CONFIG_REGISTERED_VERSION);
     }
 
     private function installDatabase()
@@ -144,6 +153,25 @@ class FlutterwavePayment extends \PaymentModule
         return Db::getInstance()->execute($sql);
     }
 
+    /**
+     * TTL key/value store used by the SigNoz logger for its circuit breaker,
+     * health cache and per-reference trace contexts.
+     */
+    public function installSignozDatabase()
+    {
+        $sql = '
+        CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . FlutterwaveSignozLogger::STATE_TABLE . '` (
+            `name` VARCHAR(64) NOT NULL,
+            `value` TEXT NOT NULL,
+            `expires_at` INT UNSIGNED NOT NULL,
+            PRIMARY KEY (`name`),
+            KEY `idx_expires_at` (`expires_at`)
+        ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8mb4;
+        ';
+
+        return Db::getInstance()->execute($sql);
+    }
+
     private function uninstallDatabase()
     {
         $sql = '
@@ -154,6 +182,12 @@ class FlutterwavePayment extends \PaymentModule
 
         $sql = '
             DROP TABLE IF EXISTS `' . _DB_PREFIX_ . 'flutterwave_refund`;
+        ';
+
+        $result = $result && Db::getInstance()->execute($sql);
+
+        $sql = '
+            DROP TABLE IF EXISTS `' . _DB_PREFIX_ . FlutterwaveSignozLogger::STATE_TABLE . '`;
         ';
 
         return $result && Db::getInstance()->execute($sql);
@@ -202,10 +236,24 @@ class FlutterwavePayment extends \PaymentModule
                 Configuration::updateValue('FLUTTERWAVE_SECRET_KEY', $flutterwaveSecretKey);
                 Configuration::updateValue('FLUTTERWAVE_WEBHOOK_SECRET', $flutterwaveWebhookSecret);
                 $output .= $this->displayConfirmation($this->l('Settings updated'));
+
+                FlutterwaveSignozLogger::instance()->registerApp($flutterwavePublicKey, $this->version);
             }
         }
 
         return $output . $this->displayForm();
+    }
+
+    /**
+     * Catch-all SigNoz registration for merchants who upgrade the module
+     * without re-saving its settings. The network call runs after the page
+     * has been sent.
+     */
+    public function hookDisplayBackOfficeHeader($params)
+    {
+        FlutterwaveSignozLogger::instance()->maybeRegisterInBackground($this->version);
+
+        return '';
     }
 
     public function hookActionOrderStatusUpdate($params)

@@ -12,9 +12,11 @@ if (!defined('_PS_VERSION_')) {
 }
 
 use FlutterwavePayment\classes\FlutterwaveApiClient;
+use FlutterwavePayment\classes\FlutterwaveSignozLogger;
 use FlutterwavePayment\classes\FlutterwaveTransactionVerifier;
 
 require_once dirname(__FILE__) . '/../../classes/FlutterwaveApiClient.php';
+require_once dirname(__FILE__) . '/../../classes/FlutterwaveSignozLogger.php';
 require_once dirname(__FILE__) . '/../../classes/FlutterwaveTransactionVerifier.php';
 
 
@@ -31,6 +33,8 @@ class FlutterwavePaymentWebhookModuleFrontController extends ModuleFrontControll
             http_response_code(400);
             die(json_encode(['status' => 'error', 'message' => 'Empty payload']));
         }
+
+        $signoz = FlutterwaveSignozLogger::instance();
 
         if ( ! isset($_SERVER['HTTP_VERIF_HASH']) || empty($_SERVER['HTTP_VERIF_HASH'])) {
              PrestaShopLogger::addLog(
@@ -51,6 +55,12 @@ class FlutterwavePaymentWebhookModuleFrontController extends ModuleFrontControll
 
         // Only authenticates the sender; payment details are requeried below
         if (!FlutterwaveApiClient::verifyWebhookHash($signature, $secret)) {
+            // Forged webhooks are not reported: anyone can send them. A missing
+            // secret is a store misconfiguration, and trackError throttles it.
+            if (empty($secret)) {
+                $signoz->trackError('WEBHOOK_SECRET_HASH_MISSING', 'Webhook rejected because the store has no webhook secret configured.');
+            }
+
             PrestaShopLogger::addLog(
                 'Flutterwave Webhook: Invalid signature',
                 3,
@@ -68,6 +78,7 @@ class FlutterwavePaymentWebhookModuleFrontController extends ModuleFrontControll
         $webhookData = json_decode($payload, true);
         
         if (json_last_error() !== JSON_ERROR_NONE) {
+            $signoz->trackError('WEBHOOK_BODY_DEFORMED', 'Webhook body is not valid JSON: ' . json_last_error_msg());
             http_response_code(400);
             die(json_encode(['status' => 'error', 'message' => 'Invalid JSON']));
         }
@@ -157,6 +168,12 @@ class FlutterwavePaymentWebhookModuleFrontController extends ModuleFrontControll
                     // Payment failed
                     if ($order->getCurrentState() != Configuration::get('PS_OS_ERROR')) {
                         $order->setCurrentState(Configuration::get('PS_OS_ERROR'));
+
+                        $signoz->trackError(
+                            'PAYMENT_FAILED',
+                            isset($transactionData['processor_response']) ? (string) $transactionData['processor_response'] : 'Payment failed',
+                            $reference
+                        );
                         
                         PrestaShopLogger::addLog(
                             'Flutterwave Webhook: Order #' . $orderId . ' marked as failed',
@@ -187,6 +204,8 @@ class FlutterwavePaymentWebhookModuleFrontController extends ModuleFrontControll
             http_response_code(200);
             die(json_encode(['status' => 'success', 'message' => 'Webhook processed']));
         } catch (Exception $e) {
+            $signoz->trackError('WEBHOOK_PROCESSING_FAILED', $e->getMessage(), isset($reference) ? (string) $reference : '');
+
             PrestaShopLogger::addLog(
                 'Flutterwave Webhook Error: ' . $e->getMessage(),
                 3,

@@ -5,6 +5,11 @@ All notable changes to the Flutterwave PrestaShop Payment Module will be documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - Unreleased
+
+### Added
+- SigNoz monitoring (`app.created`, `request.sent`, `app.transaction`, `app.error`) for integration events and errors, ported from the WooCommerce plugin. Events are sent after the response is flushed, behind a health check and circuit breaker, so they never slow down or break checkout.
+
 ## [1.0.0] - 2026-05-08
 
 ### Added
